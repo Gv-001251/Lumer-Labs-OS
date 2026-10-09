@@ -147,9 +147,19 @@ export interface SendWhatsAppTextMessageOptions {
   previewUrl?: boolean;
 }
 
+export interface WhatsAppMetaErrorDetails {
+  message?: string;
+  type?: string;
+  code?: number;
+  errorSubcode?: number;
+  fbtraceId?: string;
+  httpStatus?: number;
+}
+
 export interface SendWhatsAppMessageResponse {
   success: boolean;
   waMessageId?: string;
   error?: string;
-  errorCategory?: "CONFIG_ERROR" | "NETWORK_ERROR" | "API_ERROR";
+  errorCategory?: "CONFIG_ERROR" | "NETWORK_ERROR" | "API_ERROR" | "RECIPIENT_ERROR" | "DISABLED";
+  errorDetails?: WhatsAppMetaErrorDetails;
 }

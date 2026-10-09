@@ -103,12 +103,50 @@ export class WhatsAppCloudClient {
       const responseData = await response.json();
 
       if (!response.ok) {
-        const errorMsg = responseData?.error?.message || `HTTP ${response.status} ${response.statusText}`;
-        console.error(`[WhatsApp API Error] Status: ${response.status}, Code: ${responseData?.error?.code}`);
+        const metaError = responseData?.error || {};
+        const code = typeof metaError.code === "number" ? metaError.code : undefined;
+        const errorSubcode =
+          typeof metaError.error_subcode === "number"
+            ? metaError.error_subcode
+            : typeof metaError.subcode === "number"
+            ? metaError.subcode
+            : undefined;
+        const type = typeof metaError.type === "string" ? metaError.type : undefined;
+        const message = typeof metaError.message === "string" ? metaError.message : `HTTP ${response.status} ${response.statusText}`;
+        const fbtraceId =
+          typeof metaError.fbtrace_id === "string"
+            ? metaError.fbtrace_id
+            : typeof metaError.fbtraceId === "string"
+            ? metaError.fbtraceId
+            : undefined;
+
+        const errorDetails = {
+          message,
+          type,
+          code,
+          errorSubcode,
+          fbtraceId,
+          httpStatus: response.status,
+        };
+
+        const isRecipientError = code === 131030;
+        const errorCategory = isRecipientError ? ("RECIPIENT_ERROR" as const) : ("API_ERROR" as const);
+
+        if (isRecipientError) {
+          console.error(
+            `[WhatsApp API Recipient Error 131030] Recipient ${cleanTo} not allowed by Meta. Message: ${message}, Subcode: ${errorSubcode ?? "N/A"}, Trace ID: ${fbtraceId ?? "N/A"}`
+          );
+        } else {
+          console.error(
+            `[WhatsApp API Error] Status: ${response.status}, Code: ${code ?? "N/A"}, Type: ${type ?? "N/A"}, Subcode: ${errorSubcode ?? "N/A"}, Trace ID: ${fbtraceId ?? "N/A"}, Message: ${message}`
+          );
+        }
+
         return {
           success: false,
-          error: `Meta Graph API Error: ${errorMsg}`,
-          errorCategory: "API_ERROR",
+          error: `Meta Graph API Error: ${message}`,
+          errorCategory,
+          errorDetails,
         };
       }
 

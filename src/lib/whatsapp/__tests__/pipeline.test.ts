@@ -3,8 +3,9 @@ import { parseIndianCurrency, formatIndianCurrency } from "../indianCurrency";
 import { parseWhatsAppMessage } from "../aiParser";
 import { matchClientInMemory, generateNextClientCode, calculateSimilarity } from "../clientMatcher";
 import { validateFinancials } from "../financialValidator";
-import { processWhatsAppMessagePipeline } from "../pipeline";
+import { processWhatsAppMessagePipeline, checkOutboundReplyEligibility, isSampleOrSimulatedSenderId } from "../pipeline";
 import { ExtractedWhatsAppMessage } from "../types";
+import { WhatsAppCloudClient } from "../client";
 
 /**
  * Comprehensive Automated Test Suite for WhatsApp -> AI -> Database -> Lumer OS Pipeline
@@ -15,7 +16,7 @@ async function runPipelineTestSuite() {
   console.log("=================================================");
 
   let passed = 0;
-  let total = 14;
+  let total = 18;
 
   // ----------------------------------------------------
   // Test 1: Indian Currency & Number Parsing
@@ -306,6 +307,176 @@ Pending - 1,00,000`,
     passed++;
   } catch (err) {
     console.error("❌ Test 14 Failed:", err);
+  }
+
+  // ----------------------------------------------------
+  // Test 15: Configurable Outbound Replies (Disabled by Default)
+  // ----------------------------------------------------
+  try {
+    delete process.env.WHATSAPP_ENABLE_OUTBOUND_REPLIES;
+    const eligibility = checkOutboundReplyEligibility("919911223344");
+    assert.strictEqual(eligibility.allowed, false);
+    assert.ok(eligibility.reason?.includes("WHATSAPP_ENABLE_OUTBOUND_REPLIES"));
+
+    const testMsgDisabled: ExtractedWhatsAppMessage = {
+      waMessageId: "wamid.pipeline.e2e.test15",
+      senderWaId: "919911223344",
+      phoneNumberId: "phone_123",
+      messageType: "text",
+      textBody: "Elite Squad Karate Academy paid 2,000 today.",
+      timestamp: new Date().toISOString(),
+      rawMetadata: {},
+    };
+
+    const resDisabled = await processWhatsAppMessagePipeline(testMsgDisabled);
+    assert.strictEqual(resDisabled.success, true);
+    assert.strictEqual(resDisabled.whatsappResponseSent, false);
+    assert.ok(resDisabled.whatsappSendError?.includes("WHATSAPP_ENABLE_OUTBOUND_REPLIES"));
+    console.log("✅ Test 15 Passed: Configurable Outbound Replies Disabled by Default");
+    passed++;
+  } catch (err) {
+    console.error("❌ Test 15 Failed:", err);
+  }
+
+  // ----------------------------------------------------
+  // Test 16: Sample & Simulated Sender ID Protection
+  // ----------------------------------------------------
+  try {
+    process.env.WHATSAPP_ENABLE_OUTBOUND_REPLIES = "true";
+
+    assert.strictEqual(isSampleOrSimulatedSenderId("16315551181"), true);
+    assert.strictEqual(isSampleOrSimulatedSenderId("1555019999"), true);
+    assert.strictEqual(isSampleOrSimulatedSenderId("919876543210"), true);
+    assert.strictEqual(isSampleOrSimulatedSenderId("919988776655"), false);
+
+    const testMsgSample: ExtractedWhatsAppMessage = {
+      waMessageId: "wamid.pipeline.e2e.test16",
+      senderWaId: "16315551181", // sample sender WA ID from Meta test suite / logs
+      phoneNumberId: "phone_123",
+      messageType: "text",
+      textBody: "Elite Squad Karate Academy paid 2,000 today.",
+      timestamp: new Date().toISOString(),
+      rawMetadata: {},
+    };
+
+    const resSample = await processWhatsAppMessagePipeline(testMsgSample);
+    assert.strictEqual(resSample.success, true);
+    assert.strictEqual(resSample.whatsappResponseSent, false);
+    assert.ok(resSample.whatsappSendError?.includes("sample/simulated sender ID"));
+    console.log("✅ Test 16 Passed: Sample & Simulated Sender ID Outbound Protection (16315551181)");
+    passed++;
+  } catch (err) {
+    console.error("❌ Test 16 Failed:", err);
+  }
+
+  // ----------------------------------------------------
+  // Test 17: Meta Outbound Error 131030 Safe Error Capture & Inbound Preservation
+  // ----------------------------------------------------
+  try {
+    process.env.WHATSAPP_ENABLE_OUTBOUND_REPLIES = "true";
+    process.env.WHATSAPP_ACCESS_TOKEN = "test_access_token_123";
+    process.env.WHATSAPP_PHONE_NUMBER_ID = "phone_123";
+    const originalFetch = global.fetch;
+
+    // Mock fetch to simulate Meta Error 131030 HTTP 400 Bad Request
+    global.fetch = (async (url: string, init?: RequestInit) => {
+      return {
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        json: async () => ({
+          error: {
+            message: "(#131030) Recipient phone number not in allowed list",
+            type: "OAuthException",
+            code: 131030,
+            error_subcode: 2659007,
+            fbtrace_id: "test_fbtrace_99887766",
+          },
+        }),
+      } as Response;
+    }) as typeof fetch;
+
+    const testClient = new WhatsAppCloudClient({
+      accessToken: "test_token_valid",
+      phoneNumberId: "phone_123",
+    });
+
+    const sendRes = await testClient.sendTextMessage({
+      to: "919988776655",
+      text: "Test reply",
+    });
+
+    assert.strictEqual(sendRes.success, false);
+    assert.strictEqual(sendRes.errorCategory, "RECIPIENT_ERROR");
+    assert.strictEqual(sendRes.errorDetails?.code, 131030);
+    assert.strictEqual(sendRes.errorDetails?.errorSubcode, 2659007);
+    assert.strictEqual(sendRes.errorDetails?.fbtraceId, "test_fbtrace_99887766");
+    assert.strictEqual(sendRes.errorDetails?.httpStatus, 400);
+
+    const testMsgMetaErr: ExtractedWhatsAppMessage = {
+      waMessageId: "wamid.pipeline.e2e.test17",
+      senderWaId: "919988776655",
+      phoneNumberId: "phone_123",
+      messageType: "text",
+      textBody: "Elite Squad Karate Academy paid 2,000 today.",
+      timestamp: new Date().toISOString(),
+      rawMetadata: {},
+    };
+
+    const pipelineErrRes = await processWhatsAppMessagePipeline(testMsgMetaErr);
+    assert.strictEqual(pipelineErrRes.success, true); // Inbound processing MUST succeed
+    assert.strictEqual(pipelineErrRes.processedAutomatically, true);
+    assert.strictEqual(pipelineErrRes.whatsappResponseSent, false);
+    assert.strictEqual(pipelineErrRes.whatsappSendErrorDetails?.code, 131030);
+
+    global.fetch = originalFetch;
+    console.log("✅ Test 17 Passed: Meta Outbound Error 131030 Safe Error Capture & Inbound Preservation");
+    passed++;
+  } catch (err) {
+    console.error("❌ Test 17 Failed:", err);
+  }
+
+  // ----------------------------------------------------
+  // Test 18: Successful Outbound Reply Execution
+  // ----------------------------------------------------
+  try {
+    process.env.WHATSAPP_ENABLE_OUTBOUND_REPLIES = "true";
+    process.env.WHATSAPP_ACCESS_TOKEN = "test_access_token_123";
+    process.env.WHATSAPP_PHONE_NUMBER_ID = "phone_123";
+    const originalFetch = global.fetch;
+
+    global.fetch = (async (url: string, init?: RequestInit) => {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          messaging_product: "whatsapp",
+          contacts: [{ input: "919988776655", wa_id: "919988776655" }],
+          messages: [{ id: "wamid.outbound.success.100" }],
+        }),
+      } as Response;
+    }) as typeof fetch;
+
+    const testMsgSuccess: ExtractedWhatsAppMessage = {
+      waMessageId: "wamid.pipeline.e2e.test18",
+      senderWaId: "919988776655",
+      phoneNumberId: "phone_123",
+      messageType: "text",
+      textBody: "Elite Squad Karate Academy paid 2,000 today.",
+      timestamp: new Date().toISOString(),
+      rawMetadata: {},
+    };
+
+    const resSuccess = await processWhatsAppMessagePipeline(testMsgSuccess);
+    assert.strictEqual(resSuccess.success, true);
+    assert.strictEqual(resSuccess.whatsappResponseSent, true);
+    assert.strictEqual(resSuccess.whatsappSendError, undefined);
+
+    global.fetch = originalFetch;
+    console.log("✅ Test 18 Passed: Successful Outbound Reply Execution");
+    passed++;
+  } catch (err) {
+    console.error("❌ Test 18 Failed:", err);
   }
 
   console.log("=================================================");

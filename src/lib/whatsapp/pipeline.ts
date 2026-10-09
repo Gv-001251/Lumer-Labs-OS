@@ -6,7 +6,7 @@ import { processWhatsAppImageMessage } from "./visionParser";
 import { logAuditTrail } from "./auditLogger";
 import { getWhatsAppClient } from "./client";
 import { formatIndianCurrency } from "./indianCurrency";
-import { ExtractedWhatsAppMessage } from "./types";
+import { ExtractedWhatsAppMessage, WhatsAppMetaErrorDetails } from "./types";
 
 export interface PipelineExecutionResult {
   success: boolean;
@@ -21,6 +21,8 @@ export interface PipelineExecutionResult {
   aiInboxId?: string;
   whatsappResponseSent: boolean;
   whatsappMessageText?: string;
+  whatsappSendError?: string;
+  whatsappSendErrorDetails?: WhatsAppMetaErrorDetails;
   discrepancyFlag?: string;
   notes?: string;
 }
@@ -200,7 +202,7 @@ export async function processWhatsAppMessagePipeline(
       replyMsgText = `⚠️ ${financialCheck.discrepancyMessage}. Pushed to Lumer OS AI Inbox for team review.`;
     }
 
-    await sendWhatsAppReplyIfConfigured(incomingMsg.senderWaId, replyMsgText);
+    const replyResult = await sendWhatsAppReplyIfConfigured(incomingMsg.senderWaId, replyMsgText);
 
     return {
       success: true,
@@ -210,8 +212,10 @@ export async function processWhatsAppMessagePipeline(
       requiresReview: true,
       aiInboxId,
       discrepancyFlag: financialCheck.hasDiscrepancy ? financialCheck.discrepancyMessage : undefined,
-      whatsappResponseSent: true,
+      whatsappResponseSent: replyResult.sent,
       whatsappMessageText: replyMsgText,
+      whatsappSendError: replyResult.error,
+      whatsappSendErrorDetails: replyResult.errorDetails,
       notes,
     };
   }
@@ -423,7 +427,7 @@ export async function processWhatsAppMessagePipeline(
     confirmationText = `✅ Updated Lumer OS\n\nRecorded ${extracted.intent} successfully.\nDashboard updated.`;
   }
 
-  await sendWhatsAppReplyIfConfigured(incomingMsg.senderWaId, confirmationText);
+  const replyResult = await sendWhatsAppReplyIfConfigured(incomingMsg.senderWaId, confirmationText);
 
   return {
     success: true,
@@ -435,21 +439,122 @@ export async function processWhatsAppMessagePipeline(
     clientCode: finalClientCode,
     clientName: finalClientName,
     transactionId,
-    whatsappResponseSent: true,
+    whatsappResponseSent: replyResult.sent,
     whatsappMessageText: confirmationText,
+    whatsappSendError: replyResult.error,
+    whatsappSendErrorDetails: replyResult.errorDetails,
   };
 }
 
 /**
- * Sends outbound confirmation or query reply via WhatsApp Cloud API
+ * Detects sample, simulated, or known test sender IDs that should not receive outbound Meta API calls.
  */
-async function sendWhatsAppReplyIfConfigured(recipientWaId: string, textContent: string) {
+export function isSampleOrSimulatedSenderId(waId: string): boolean {
+  if (!waId) return true;
+  const cleanId = waId.trim().replace(/[^a-zA-Z0-9]/g, "");
+
+  const knownSampleIds = new Set([
+    "16315551181",
+    "1555019999",
+    "15550123456",
+    "919876543210",
+    "0000000000",
+    "1234567890",
+  ]);
+
+  if (knownSampleIds.has(cleanId)) return true;
+
+  if (/^1?55501\d{4}$/.test(cleanId)) return true;
+
+  const lower = waId.toLowerCase();
+  if (
+    lower.includes("test") ||
+    lower.includes("sample") ||
+    lower.includes("dummy") ||
+    lower.includes("simulated")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Verifies whether outbound WhatsApp replies are explicitly enabled in environment settings
+ * and whether the recipient is eligible (i.e. not a test/sample sender ID).
+ */
+export function checkOutboundReplyEligibility(recipientWaId: string): {
+  allowed: boolean;
+  reason?: string;
+} {
+  const isEnabled = process.env.WHATSAPP_ENABLE_OUTBOUND_REPLIES === "true";
+  if (!isEnabled) {
+    return {
+      allowed: false,
+      reason: "Outbound replies disabled via environment setting WHATSAPP_ENABLE_OUTBOUND_REPLIES (must be 'true').",
+    };
+  }
+
+  if (isSampleOrSimulatedSenderId(recipientWaId)) {
+    return {
+      allowed: false,
+      reason: `Skipped sending outbound reply to sample/simulated sender ID (${recipientWaId}).`,
+    };
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * Sends outbound confirmation or query reply via WhatsApp Cloud API if enabled and configured.
+ */
+export async function sendWhatsAppReplyIfConfigured(
+  recipientWaId: string,
+  textContent: string
+): Promise<{
+  sent: boolean;
+  error?: string;
+  errorDetails?: WhatsAppMetaErrorDetails;
+}> {
+  const eligibility = checkOutboundReplyEligibility(recipientWaId);
+  if (!eligibility.allowed) {
+    console.log(`[WhatsApp Reply Skipped] ${eligibility.reason}`);
+    return {
+      sent: false,
+      error: eligibility.reason,
+    };
+  }
+
   try {
     const client = getWhatsAppClient();
-    if (client.isConfigured().valid) {
-      await client.sendTextMessage({ to: recipientWaId, text: textContent });
+    const configCheck = client.isConfigured();
+    if (!configCheck.valid) {
+      const missingMsg = `WhatsApp API client not configured. Missing: ${configCheck.missing.join(", ")}`;
+      console.warn(`[WhatsApp Reply Skipped] ${missingMsg}`);
+      return {
+        sent: false,
+        error: missingMsg,
+      };
+    }
+
+    const res = await client.sendTextMessage({ to: recipientWaId, text: textContent });
+    if (res.success) {
+      console.log(`[WhatsApp Outbound Reply Sent] Message ID: ${res.waMessageId} to ${recipientWaId}`);
+      return { sent: true };
+    } else {
+      console.warn(`[WhatsApp Outbound Reply Failed] Recipient: ${recipientWaId}, Error: ${res.error}`);
+      return {
+        sent: false,
+        error: res.error,
+        errorDetails: res.errorDetails,
+      };
     }
   } catch (err) {
-    console.warn("[WhatsApp Reply Outbound Failure]", err);
+    const errorMsg = err instanceof Error ? err.message : "Unknown outbound reply failure";
+    console.warn("[WhatsApp Reply Outbound Failure]", errorMsg);
+    return {
+      sent: false,
+      error: `Failed to send WhatsApp reply: ${errorMsg}`,
+    };
   }
 }

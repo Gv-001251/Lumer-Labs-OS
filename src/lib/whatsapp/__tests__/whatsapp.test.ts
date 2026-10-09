@@ -13,7 +13,7 @@ async function runWhatsAppTests() {
   console.log("=================================================");
 
   let passed = 0;
-  let total = 12;
+  let total = 14;
 
   // Set test environment variable verify token
   const TEST_VERIFY_TOKEN = "lumer_test_verify_token_998877";
@@ -315,6 +315,80 @@ async function runWhatsAppTests() {
     passed++;
   } catch (err) {
     console.error("❌ Test 12 Failed:", err);
+  }
+
+  // Test 13: Meta Error Code 131030 Recipient Error Classification
+  try {
+    const originalFetch = global.fetch;
+
+    global.fetch = (async () => {
+      return {
+        ok: false,
+        status: 400,
+        json: async () => ({
+          error: {
+            message: "(#131030) Recipient phone number not in allowed list",
+            type: "OAuthException",
+            code: 131030,
+            error_subcode: 2659007,
+            fbtrace_id: "test_fbtrace_id_abc123",
+          },
+        }),
+      } as Response;
+    }) as typeof fetch;
+
+    const client = new WhatsAppCloudClient({ accessToken: "valid_token", phoneNumberId: "valid_id" });
+    const res = await client.sendTextMessage({ to: "919999900000", text: "Hello recipient test" });
+
+    assert.strictEqual(res.success, false);
+    assert.strictEqual(res.errorCategory, "RECIPIENT_ERROR");
+    assert.strictEqual(res.errorDetails?.code, 131030);
+    assert.strictEqual(res.errorDetails?.errorSubcode, 2659007);
+    assert.strictEqual(res.errorDetails?.fbtraceId, "test_fbtrace_id_abc123");
+    assert.strictEqual(res.errorDetails?.type, "OAuthException");
+    assert.strictEqual(res.errorDetails?.httpStatus, 400);
+
+    global.fetch = originalFetch;
+    console.log("✅ Test 13 Passed: Meta Error Code 131030 Recipient Error Classification");
+    passed++;
+  } catch (err) {
+    console.error("❌ Test 13 Failed:", err);
+  }
+
+  // Test 14: Structured Meta Error Details Extraction
+  try {
+    const originalFetch = global.fetch;
+
+    global.fetch = (async () => {
+      return {
+        ok: false,
+        status: 401,
+        json: async () => ({
+          error: {
+            message: "Invalid OAuth access token.",
+            type: "OAuthException",
+            code: 190,
+            error_subcode: 463,
+            fbtrace_id: "trace_token_expired",
+          },
+        }),
+      } as Response;
+    }) as typeof fetch;
+
+    const client = new WhatsAppCloudClient({ accessToken: "expired_token", phoneNumberId: "valid_id" });
+    const res = await client.sendTextMessage({ to: "919999900000", text: "Hello token test" });
+
+    assert.strictEqual(res.success, false);
+    assert.strictEqual(res.errorCategory, "API_ERROR");
+    assert.strictEqual(res.errorDetails?.code, 190);
+    assert.strictEqual(res.errorDetails?.errorSubcode, 463);
+    assert.strictEqual(res.errorDetails?.fbtraceId, "trace_token_expired");
+
+    global.fetch = originalFetch;
+    console.log("✅ Test 14 Passed: Structured Meta Error Details Extraction (Code 190)");
+    passed++;
+  } catch (err) {
+    console.error("❌ Test 14 Failed:", err);
   }
 
   console.log("=================================================");
