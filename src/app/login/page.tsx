@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Lock, Mail, ArrowRight, Sparkles, AlertCircle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { z } from "zod";
@@ -124,13 +125,24 @@ export default function LoginPage() {
         </form>
 
         {/* Demo Mode Button */}
-        <div className="pt-4 border-t border-slate-100 text-center space-y-2">
+        <div className="pt-4 border-t border-slate-100 text-center space-y-2.5">
           <button
             onClick={handleDemoBypass}
             className="w-full py-2.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs transition-colors flex items-center justify-center gap-2"
           >
             <Sparkles className="w-3.5 h-3.5 text-violet-600" /> Continue with Demo Workspace
           </button>
+          
+          <div className="flex items-center justify-center gap-3 text-[11px] font-semibold text-slate-500 pt-0.5">
+            <Link href="/privacy" className="hover:text-slate-900 transition-colors hover:underline">
+              Privacy Policy
+            </Link>
+            <span className="text-slate-300">•</span>
+            <Link href="/terms" className="hover:text-slate-900 transition-colors hover:underline">
+              Terms of Service
+            </Link>
+          </div>
+
           <span className="text-[10px] text-slate-400 font-medium block">
             Powered by Supabase Auth & PostgreSQL Row Level Security
           </span>

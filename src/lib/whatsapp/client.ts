@@ -11,8 +11,8 @@ export class WhatsAppCloudClient {
 
   constructor(config?: { accessToken?: string; phoneNumberId?: string; apiVersion?: string }) {
     // Strictly read server environment variables
-    this.accessToken = config?.accessToken || process.env.WHATSAPP_ACCESS_TOKEN || "";
-    this.phoneNumberId = config?.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID || "";
+    this.accessToken = (config?.accessToken || process.env.WHATSAPP_ACCESS_TOKEN || "").trim();
+    this.phoneNumberId = (config?.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID || "").trim();
     
     // Explicitly fallback to documented v22.0 default if WHATSAPP_API_VERSION is empty
     const rawVersion = config?.apiVersion || process.env.WHATSAPP_API_VERSION;

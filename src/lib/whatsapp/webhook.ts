@@ -38,7 +38,7 @@ export function verifyWebhookChallenge(searchParams: URLSearchParams): {
   const token = searchParams.get("hub.verify_token");
   const challenge = searchParams.get("hub.challenge");
 
-  const expectedVerifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
+  const expectedVerifyToken = process.env.WHATSAPP_VERIFY_TOKEN?.trim();
 
   if (!mode || !token || !challenge) {
     return {

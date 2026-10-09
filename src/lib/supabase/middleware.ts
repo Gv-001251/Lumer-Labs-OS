@@ -35,8 +35,11 @@ export async function updateSession(request: NextRequest) {
     user = null;
   }
 
-  // Redirect unauthenticated requests away from protected dashboard pages if not on /login
-  const isLoginPage = request.nextUrl.pathname.startsWith("/login");
+  // Redirect unauthenticated requests away from protected dashboard pages if not on public pages (/login, /privacy, /terms)
+  const isPublicPage =
+    request.nextUrl.pathname.startsWith("/login") ||
+    request.nextUrl.pathname.startsWith("/privacy") ||
+    request.nextUrl.pathname.startsWith("/terms");
   const isApiWebhook = request.nextUrl.pathname.startsWith("/api/webhooks");
   const isPublicAsset =
     request.nextUrl.pathname.startsWith("/_next") ||
@@ -48,7 +51,7 @@ export async function updateSession(request: NextRequest) {
 
 
   // Note: For initial demo convenience, allow access if url is demo or if logged in
-  if (!user && !isLoginPage && !isPublicAsset && process.env.NODE_ENV === "production" && process.env.NEXT_PUBLIC_SUPABASE_URL?.includes("supabase.co") && !process.env.NEXT_PUBLIC_SUPABASE_URL?.includes("demo")) {
+  if (!user && !isPublicPage && !isPublicAsset && process.env.NODE_ENV === "production" && process.env.NEXT_PUBLIC_SUPABASE_URL?.includes("supabase.co") && !process.env.NEXT_PUBLIC_SUPABASE_URL?.includes("demo")) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);

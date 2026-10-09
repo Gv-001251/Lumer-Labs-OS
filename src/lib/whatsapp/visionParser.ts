@@ -26,11 +26,13 @@ export async function processWhatsAppImageMessage(
     
     // Attempt media URL fetch from Meta Graph API if credentials exist
     if (client.isConfigured().valid) {
+      const apiVersion = (process.env.WHATSAPP_API_VERSION || "v22.0").trim();
+      const accessToken = (process.env.WHATSAPP_ACCESS_TOKEN || "").trim();
       const mediaUrlRes = await fetch(
-        `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION || "v22.0"}/${mediaId}`,
+        `https://graph.facebook.com/${apiVersion}/${mediaId}`,
         {
           headers: {
-            Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+            Authorization: `Bearer ${accessToken}`,
           },
         }
       );
